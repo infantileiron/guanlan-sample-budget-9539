@@ -27,14 +27,14 @@ docker compose exec -T backend python -m scripts.seed_demo
 | 前端 | Vue3.5.13、TypeScript5.7、Vite6、Vue Router4 |
 | 后端 | Python3.12、FastAPI0.115.6、SQLAlchemy2 |
 | 存储 | MySQL8.4 LTS、Redis7.4 |
-| 算法 | Python整数math.comb、Fraction目标比较、Decimal差错数向上取整、确定性Neyman分配 |
+| 算法 | Python整数math.comb、Fraction目标比较、Decimal差错数向上取整、确定性Neyman分配、工时制字典序max-min整数配额 |
 | 抽样 | Python Random(seed).sample，无放回，清单保存数据库 |
 | 网关 | Nginx1.28、SPA回落及API代理 |
 
 - `backend/src/models,schemas,services,controllers,routes`：按六实体分层。
-- `services/hypergeometric.py`：漏检概率/最小样本量；`neyman.py`：整数配额；`allocation.py`：风险层汇总/可行性；`draw_service.py`：具体文档编号。
+- `services/hypergeometric.py`：漏检概率/最小样本量；`neyman.py`：份数预算整数配额；`worktime.py`：工时制单份耗时与总工时整数配额；`allocation.py`：风险层汇总/可行性，按计划口径分流；`draw_service.py`：具体文档编号。
 - `config,utils,middlewares`：环境变量、数据库、认证、队列、审计及统一错误。
-- `backend/scripts/seed_demo.py`：自然键幂等；`migrations/001_schema.sql`：新库基线说明，以SQLAlchemy元数据建表。
+- `backend/scripts/seed_demo.py`：自然键幂等；`migrations/001_schema.sql`：新库基线说明，以SQLAlchemy元数据建表；`migrations/002_worktime_plan.sql`：存量库补工时制两列的一次性ALTER脚本（旧数据留空即按份数预算）。
 - `frontend/src/api,stores,types,constants,hooks,pages,router`：完整业务入口；共享AllocationTable、QuotaBars、ManifestTable分别跨总览/配额/归档复用。
 - 测试与截图在批次外层 `test-artifacts/gb-2208`，不放在源码内。
 
@@ -82,11 +82,20 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 层内将所选批次文档拼为有限总体，用固定seed的 `random.sample` 不放回抽取。层和批次先按稳定键排序，重复运行同一计划得到相同文档与顺序。抽样清单一经保存不随刷新重抽；报告保存批准时清单及配额快照。
 
-参数边界：每批1至5000份，计划最多30批，预算1至5000，目标0至1；非法风险层、重复批次选择、非法差错率拒绝。不存在批次422，名称/编号前缀冲突409。
+### 工时制整数配额（按各层单份耗时与总工时）
+
+旧口径只按份数 `B` 分配，风险层单份复核耗时不同会让共用配额超出实际工时。新建计划可同时提供 `total_hours`（总复核工时）与 `stratum_costs`（各风险层单份耗时，1至1000的整数），启用后约束变为 `Σ c_h·n_h ≤ total_hours`，配额仍为整数，清单份数由最终配额决定，余时允许闲置。**升级前的旧计划两字段为空，继续按份数走Neyman预算，历史运行快照不变。**
+
+1. 先求各层精确最低样本 `L_h`。若任一非零目标层 `D=0`、或 `Σ c_h·L_h > total_hours`，运行置 `infeasible`，结果给出最低工时与原因，**不生成文档抽样**；所选风险层缺少单份耗时配置同样判为不可行。
+2. 可行后在剩余工时内做字典序 max-min：先把各层最低检出率（=最大漏检率）尽量抬高，再依次抬高次低者。每轮求所有未固定层都能负担的最小漏检阈值，买不起公共阈值时固定一层后递归；风险层至多4个，分支有限。
+3. **同样检出效果取耗时最少的整数配额**（其次取最少份数、再按固定层序），因此买不起下一整份时工时闲置，不把工时投到无增益的增量；`D=0` 层与已保证命中（`n>N−D`）的层不再加样。
+4. 漏检率全程用整数组合数对交叉相乘比较，每层漏检序列由相邻组合数整数递推构造，不转浮点；配额页逐层展示单份耗时、层用时、已用与剩余工时，CSV在工时制下追加 `cost_per_item`、`layer_hours` 两列。
+
+参数边界：每批1至5000份，计划最多30批，份数预算1至5000，目标0至1，总工时1至10000000，各层单份耗时1至1000且必须与总工时同时提供；非法风险层、重复批次选择、非法差错率拒绝。不存在批次422，名称/编号前缀冲突409。
 
 ## 模拟数据与工作日
 
-12批、1800份档案：4风险层，每层100/150/200份三批；p分别0.01/0.03/0.06/0.12。默认计划预算480，目标95%，seed20261112。
+12批、1800份档案：4风险层，每层100/150/200份三批；p分别0.01/0.03/0.06/0.12。默认份数计划预算480、目标95%、seed20261112；另含一个工时制演示计划，四层单份耗时1/2/3/4、总工时900，用于对照两种口径。
 
 1. 09:00 核对 `guanlan_acceptance_202611.csv` 与12批底册的份数和前缀。
 2. 09:04 复查预估差错率来源，确认四层口径而非逐批保证。
@@ -103,7 +112,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 - 使用本机已有MySQL8.4 LTS，属于MySQL8家族；不是8.0镜像。
 - Redis列表无worker崩溃租约及自动重投、无任务取消；可新建运行重试。
-- 新数据库自动建表，没有存量数据库版本化迁移/回滚；实体列表最多200条，清单UI预览前80条匹配项，CSV保留全部。
+- 新数据库自动建表；存量库仅提供工时制两列的一次性ALTER（002），无完整版本化迁移/回滚框架；实体列表最多200条，清单UI预览前80条匹配项，CSV保留全部。
 - 档案为模拟编号；不上传真实文档、不执行OCR或判定实际差错。概率依赖固定D假设，不是验收质量保证。
 - Google Fonts需联网，断网时回退字体。
 

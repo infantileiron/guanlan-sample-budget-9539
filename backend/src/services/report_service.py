@@ -16,8 +16,18 @@ def create(db,body):
  row=Report(id=str(uuid4()),review_id=review.id,title=body.title,snapshot={"manifest":draw.manifest,"allocation":run.result,"action":review.action,"reviewer":review.reviewer});db.add(row);db.commit();return row
 
 def export(row):
- out=io.StringIO();writer=csv.writer(out);writer.writerow(["position","document_id","lot_name","stratum","stratum_N","assumed_D","stratum_quota","detection_probability","miss_probability","guaranteed_detection"])
- layers={s["stratum"]:s for s in row.snapshot["allocation"]["strata"]}
+ out=io.StringIO();writer=csv.writer(out)
+ allocation=row.snapshot["allocation"]
+ worktime=allocation.get("allocation_mode")=="worktime"
+ if worktime:
+  writer.writerow(["position","document_id","lot_name","stratum","stratum_N","assumed_D","stratum_quota","cost_per_item","layer_hours","detection_probability","miss_probability","guaranteed_detection"])
+ else:
+  writer.writerow(["position","document_id","lot_name","stratum","stratum_N","assumed_D","stratum_quota","detection_probability","miss_probability","guaranteed_detection"])
+ layers={s["stratum"]:s for s in allocation["strata"]}
  for r in row.snapshot["manifest"]:
-  s=layers[r["stratum"]];writer.writerow([r["position"],r["document_id"],r["lot_name"],r["stratum"],s["N"],s["D"],s["quota"],s["detection_probability"],s["miss_probability"],s["guaranteed"]])
+  s=layers[r["stratum"]]
+  if worktime:
+   writer.writerow([r["position"],r["document_id"],r["lot_name"],r["stratum"],s["N"],s["D"],s["quota"],s.get("cost_per"),s.get("layer_hours"),s["detection_probability"],s["miss_probability"],s["guaranteed"]])
+  else:
+   writer.writerow([r["position"],r["document_id"],r["lot_name"],r["stratum"],s["N"],s["D"],s["quota"],s["detection_probability"],s["miss_probability"],s["guaranteed"]])
  return "\ufeff"+out.getvalue()

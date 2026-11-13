@@ -21,7 +21,7 @@ def compute(db,run_id):
  row.status="running";db.commit()
  try:
   plan=db.get(SamplingPlan,row.plan_id);lots=[db.get(ArchiveLot,i) for i in plan.lot_ids]
-  result=calculate([{"stratum":l.stratum,"size":l.size,"estimated_error_rate":l.estimated_error_rate} for l in lots],plan.target_detection,plan.budget)
+  result=calculate([{"stratum":l.stratum,"size":l.size,"estimated_error_rate":l.estimated_error_rate} for l in lots],plan.target_detection,plan.budget,plan.stratum_costs,plan.total_hours)
   row.result={**result,"plan_name":plan.name,"seed":plan.seed};row.status="completed" if result["feasible"] else "infeasible";db.commit()
   if result["feasible"]:generate(db,row)
  except Exception as e:

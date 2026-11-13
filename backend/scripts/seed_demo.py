@@ -19,7 +19,15 @@ def seed():
   db.commit()
   if not db.get(SamplingPlan,"demo-plan"):db.add(SamplingPlan(id="demo-plan",name="十一月档案四层复核",lot_ids=ids,target_detection=.95,budget=480,seed=20261112))
   db.commit()
+  # 工时制计划：四层单份耗时不同，按总工时分配，先满足各层检出目标再抬高最低检出率。
+  if not db.get(SamplingPlan,"demo-worktime-plan"):
+   db.add(SamplingPlan(id="demo-worktime-plan",name="十一月档案工时制复核",lot_ids=ids,
+    target_detection=.95,budget=480,seed=20261112,
+    stratum_costs={"low":1,"moderate":2,"high":3,"critical":4},total_hours=900))
+  db.commit()
   if not db.get(AllocationRun,"demo-run"):db.add(AllocationRun(id="demo-run",plan_id="demo-plan",status="queued",result={},error=""));db.commit();compute(db,"demo-run")
+  if not db.get(AllocationRun,"demo-worktime-run"):
+   db.add(AllocationRun(id="demo-worktime-run",plan_id="demo-worktime-plan",status="queued",result={},error=""));db.commit();compute(db,"demo-worktime-run")
   draw=db.scalar(select(SampleDraw).where(SampleDraw.run_id=="demo-run"))
   if draw and not db.get(ReviewDecision,"demo-review"):db.add(ReviewDecision(id="demo-review",draw_id=draw.id,action="核对四层抽样口径与预算，按不可变文档编号复核；检出率依赖预估差错数假设，不代表质量保证。",state="approved",reviewer="admin@sample.demo"))
   db.commit()
